@@ -11,6 +11,15 @@ from screendoc import ScreenRecorder, StepDetector, DocumentationGenerator
 import time
 import tempfile
 import cv2
+from PIL import Image
+from dataclasses import dataclass
+
+@dataclass
+class Step:
+    timestamp: float
+    screenshot: np.ndarray
+    description: str = ""
+    similarity_score: float = 0.0
 
 # Page config
 st.set_page_config(
@@ -390,7 +399,118 @@ elif selected == "Review":
                     st.success("Steps deleted successfully!")
                     st.rerun()
     else:
-          st.info("Please record a video first!")
+        st.title('Upload All Images in Directory and Input Steps')
+        # Define the directory containing images
+        image_dir = screenshots_dir
+        # List all image files in the directory
+        uploaded_files = st.file_uploader("Choose images to upload", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+        if uploaded_files:
+            if st.button("Detect Steps"):
+                image_files = [f for f in os.listdir(image_dir) if f.lower().endswith(('png', 'jpg', 'jpeg'))]
+                st.session_state.screenshot_paths={}    
+                step= []
+                #Remove each image file
+                for img_file in image_files:
+                    file_path = os.path.join(image_dir, img_file)
+                    try:
+                        os.remove(file_path)
+                        st.write(f"Removed image: {img_file}")
+                    except Exception as e:
+                        st.write(f"Error removing {img_file}: {e}")
+                for index, img_file in enumerate(uploaded_files):
+                    # Open the image using PIL
+                    image = Image.open(img_file)
+                    # Convert the image to a numpy array (this will be stored as the screenshot)
+                    screenshot_array = np.array(image)
+                    
+                    # Get the current timestamp
+                    timestamp = time.time()
+                    image_path = os.path.join(screenshots_dir, img_file.name)
+                    image.save(image_path)
+                    st.session_state.screenshot_paths[index] = image_path
+                    step.append(Step(timestamp=timestamp,screenshot=screenshot_array, description='' , similarity_score=1.0))
+                    st.session_state.steps.append(Step(timestamp=timestamp,screenshot=screenshot_array, description='' , similarity_score=1.0))
+
+            if st.session_state.steps:
+                    st.markdown("### Detected Steps")
+                    
+                    # Show current detection settings if available
+                    if hasattr(st.session_state, 'similarity_threshold'):
+                        st.markdown(f"""
+                            *Current Detection Settings:*
+                            - Similarity: {st.session_state.similarity_threshold}
+                            - Min Time: {st.session_state.min_time_between}s
+                        """)
+                    
+                    # Add select all/none buttons
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Select All"):
+                            st.session_state.selected_steps = list(range(len(st.session_state.steps)))
+                            st.rerun()
+                    with col2:
+                        if st.button("Clear All"):
+                            st.session_state.selected_steps = []
+                            st.rerun()
+                    
+                    # Initialize selected steps if not exists
+                    if 'selected_steps' not in st.session_state:
+                        st.session_state.selected_steps = list(range(len(st.session_state.steps)))
+                    
+                    # Keep track of steps to delete
+                    if 'steps_to_delete' not in st.session_state:
+                        st.session_state.steps_to_delete = set()
+                    
+                    # Show steps with delete buttons
+                    for i, step in enumerate(st.session_state.steps):
+                        if i not in st.session_state.steps_to_delete:  # Only show non-deleted steps
+                            with st.container():
+                                col1, col2 = st.columns([0.8, 0.2])
+                                with col1:
+                                    step_selected = st.checkbox(
+                                        f"Step {i+1}", 
+                                        value=i in st.session_state.selected_steps,
+                                        key=f"step_{i}"
+                                    )
+                                    if step_selected and i not in st.session_state.selected_steps:
+                                        st.session_state.selected_steps.append(i)
+                                    elif not step_selected and i in st.session_state.selected_steps:
+                                        st.session_state.selected_steps.remove(i)
+                                
+                                with col2:
+                                    if st.button("🗑️", key=f"delete_{i}"):
+                                        st.session_state.steps_to_delete.add(i)
+                                        st.rerun()
+                                
+                                if i in st.session_state.selected_steps:
+                                    with st.expander("Preview", expanded=False):
+                                         if i in st.session_state.screenshot_paths:
+                                           st.image(st.session_state.screenshot_paths[i])
+                                         #st.text(f"Similarity Score: {step[i].similarity_score:.2f}")
+                    
+                    # Apply deletions if there are any
+                    if st.session_state.steps_to_delete:
+                        # Remove steps and screenshots
+                        new_steps = []
+                        new_screenshots = {}
+                        new_index = 0
+                        
+                        for i, step in enumerate(st.session_state.steps):
+                            if i not in st.session_state.steps_to_delete:
+                                new_steps.append(step)
+                                if i in st.session_state.screenshot_paths:
+                                    new_screenshots[new_index] = st.session_state.screenshot_paths[i]
+                                new_index += 1
+                        
+                        st.session_state.steps = new_steps
+                        st.session_state.screenshot_paths = new_screenshots
+                        st.session_state.steps_to_delete = set()  # Clear the deletion set
+                        st.session_state.selected_steps = list(range(len(new_steps)))  # Reset selection
+                        st.success("Steps deleted successfully!")
+                        st.rerun()
+
+        
+        st.info("Please record a video first!")
 
 elif selected == "Generate":
     if st.session_state.steps and hasattr(st.session_state, 'screenshot_paths'):
